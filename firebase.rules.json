@@ -1,0 +1,30 @@
+{
+  "rules": {
+    "KineticGen": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "telemetry": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "readings": {
+      ".read": "auth != null",
+      ".indexOn": ["timestamp"],
+      ".write": "auth != null"
+    },
+    "steps": {
+      ".read": "auth != null",
+      ".indexOn": ["timestamp"],
+      ".write": "auth != null"
+    },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || auth.token.email === \"joeysaberon8@gmail.com\")",
+        ".write": "auth != null && auth.token.email === \"joeysaberon8@gmail.com\""
+      }
+    },
+    ".read": false,
+    ".write": false
+  }
+}

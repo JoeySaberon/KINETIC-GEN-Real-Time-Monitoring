@@ -1,0 +1,7 @@
+.firebase/
+node_modules/
+.env
+.env.*
+!.env.example
+dist/
+firebase-resume-check-build/
