@@ -95,6 +95,10 @@ const DEFAULT_OVERVIEW_METRIC_ORDER = [
 ];
 const DEFAULT_OVERVIEW_CHART_ORDER = ["energyTrend", "heatmap"];
 const DEFAULT_PIEZO_METRIC_ORDER = ["voltage", "current", "power"];
+const PREVIEW_USER = {
+  email: "preview@kinetic-gen.local",
+  emailVerified: true,
+};
 
 const scrollAndroidDashboardToTop = () => {
   if (!isAndroidApp || typeof window === "undefined") {
@@ -324,6 +328,7 @@ function MetricCard({
 
 export default function App() {
   const [authUser, setAuthUser] = useState(null);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [clearingData, setClearingData] = useState(false);
@@ -1287,7 +1292,7 @@ export default function App() {
   }, [authUser]);
 
   useEffect(() => {
-    if (!authUser || typeof window === "undefined") {
+    if (!authUser || isPreviewMode || typeof window === "undefined") {
       return undefined;
     }
 
@@ -1352,12 +1357,13 @@ export default function App() {
       window.clearInterval(intervalId);
       window.clearTimeout(activityWriteTimeout);
     };
-  }, [authUser]);
+  }, [authUser, isPreviewMode]);
 
   useEffect(() => {
     if (
       !firebaseAuth ||
       authUser ||
+      isPreviewMode ||
       !verificationPending ||
       !firebaseAuth.currentUser
     ) {
@@ -1380,10 +1386,10 @@ export default function App() {
     checkVerification();
     const intervalId = window.setInterval(checkVerification, 3000);
     return () => window.clearInterval(intervalId);
-  }, [authUser, verificationPending]);
+  }, [authUser, verificationPending, isPreviewMode]);
 
   useEffect(() => {
-    if (!firebaseReady || !firebaseDb || !authUser) {
+    if (!firebaseReady || !firebaseDb || !authUser || isPreviewMode) {
       return undefined;
     }
 
@@ -1943,7 +1949,129 @@ export default function App() {
       window.clearInterval(telemetryCleanupIntervalId);
       window.clearInterval(stepsTotalIntervalId);
     };
-  }, [authUser]);
+  }, [authUser, isPreviewMode]);
+
+  useEffect(() => {
+    if (!isPreviewMode) {
+      return undefined;
+    }
+
+    let tick = 0;
+    const previewTileId = "KineticGen Preview";
+    const previewZone = "Main Entrance";
+
+    const updatePreviewData = () => {
+      const now = Date.now();
+      const phase = tick / 3;
+      const voltage = 2.45 + Math.sin(phase) * 0.32;
+      const currentMa = 118 + Math.cos(phase / 1.4) * 24;
+      const powerMw = voltage * currentMa;
+      const energyMwh = 18.4 + tick * 0.012;
+      const stepCount = 1 + (tick % 4);
+      const timestamp = new Date(now).toLocaleTimeString();
+      const reading = {
+        id: `preview-reading-${tick}`,
+        timestamp: now,
+        timestampMs: now,
+        location: previewZone,
+        Voltage_V: Number(voltage.toFixed(3)),
+        Current_mA: Number(currentMa.toFixed(1)),
+        Power_mW: Number(powerMw.toFixed(1)),
+        energy_mWh: Number(energyMwh.toFixed(3)),
+      };
+
+      setDeviceDataLoading(false);
+      setFirebaseConnected(true);
+      setSystemStatus("Online");
+      setLastDeviceUpdate(now);
+      setDayNightStatus(now % 2_400_000 < 1_200_000 ? "Day" : "Night");
+      setLdrStatus(now % 2_400_000 < 1_200_000 ? "Day" : "Night");
+      setEnergyTotal(energyMwh);
+      setStepsTotal(1248 + tick * stepCount);
+      setCurrentFootstep(stepCount);
+      setStepsLastFiveMinutes(12 + (tick % 8));
+      setDemandLevel(powerMw > 300 ? "HIGH" : powerMw > 220 ? "MEDIUM" : "LOW");
+      setLedRemainingSeconds(18 + (tick % 12));
+      setHasLedTimer(true);
+      setSystemMode(
+        now % 2_400_000 < 1_200_000
+          ? "Day Standby"
+          : powerMw > 300
+            ? "High Demand Lighting"
+            : "Balanced Lighting",
+      );
+      setTrafficRate(35 + (tick % 42));
+      setPiezoSummary({
+        totalPower: powerMw,
+        totalVoltage: voltage,
+        totalEnergy: energyMwh,
+        activeTiles: 1,
+        weakTiles: 0,
+        offlineTiles: 0,
+        tiles: [
+          {
+            tileId: previewTileId,
+            zone: previewZone,
+            voltage,
+            current: currentMa / 1000,
+            power: powerMw,
+            energy: energyMwh,
+            status: "active",
+            timestamp: now,
+          },
+        ],
+      });
+      setEnergySeries((previous) => [
+        ...previous.slice(-23),
+        { time: timestamp, value: Number(energyMwh.toFixed(3)) },
+      ]);
+      setPiezoTrend((previous) => [
+        ...previous.slice(-59),
+        {
+          timestampMs: now,
+          intervalEnergy: Number((0.08 + (tick % 5) * 0.015).toFixed(3)),
+        },
+      ]);
+      setTrafficSeries((previous) => [
+        ...previous.slice(-23),
+        {
+          hour: timestamp,
+          low: 18 + (tick % 12),
+          medium: 8 + (tick % 7),
+          high: tick % 5,
+        },
+      ]);
+      setMpptSeries((previous) => [
+        ...previous.slice(-59),
+        {
+          time: timestamp,
+          power: Number((powerMw / 1000).toFixed(3)),
+          vref: Number((1.8 + Math.sin(phase / 2) * 0.14).toFixed(3)),
+          direction: tick % 2 === 0 ? 1 : -1,
+          previousPower:
+            previous.length > 0 ? previous[previous.length - 1].power : null,
+          previousVref:
+            previous.length > 0 ? previous[previous.length - 1].vref : null,
+          stepV: 0.05,
+          decision: tick % 2 === 0 ? "Increase Vref" : "Decrease Vref",
+        },
+      ]);
+      setStepEvents((previous) => [
+        ...previous.slice(-11),
+        { timestamp: now, count: stepCount },
+      ]);
+      setActivityLog((previous) => [reading, ...previous].slice(0, 6));
+      setHistoryLog((previous) => [reading, ...previous].slice(0, 12));
+      setHasReadingHistory(true);
+      setPiezoAlerts([]);
+      setConnectionNotification(null);
+      tick += 1;
+    };
+
+    updatePreviewData();
+    const intervalId = window.setInterval(updatePreviewData, 1200);
+    return () => window.clearInterval(intervalId);
+  }, [isPreviewMode]);
 
   const sparkline = useMemo(
     () =>
@@ -2006,6 +2134,12 @@ export default function App() {
   const [tileNameDraft, setTileNameDraft] = useState("");
 
   const handleRenameZone = async (tileId, newZone) => {
+    if (isPreviewMode) {
+      setEditingZoneTileId(null);
+      setZoneDraft("");
+      return;
+    }
+
     const trimmed = newZone.trim();
     if (!trimmed) {
       setEditingZoneTileId(null);
@@ -2030,6 +2164,12 @@ export default function App() {
   };
 
   const handleRenameTile = async (tileId, newName) => {
+    if (isPreviewMode) {
+      setEditingTileNameId(null);
+      setTileNameDraft("");
+      return;
+    }
+
     const trimmed = newName.trim();
     if (!trimmed) {
       setEditingTileNameId(null);
@@ -2120,6 +2260,21 @@ export default function App() {
     }
   };
 
+  const enterPreviewMode = () => {
+    setAuthError("");
+    setAuthNotice("");
+    setIsPreviewMode(true);
+    setAuthUser(PREVIEW_USER);
+  };
+
+  const exitPreviewMode = () => {
+    setIsPreviewMode(false);
+    setAuthUser(null);
+    setActiveSection("overview");
+    setShowProfileMenu(false);
+    setShowNotifications(false);
+  };
+
   const handleCreateAccount = async (event) => {
     event.preventDefault();
     setCreateAccountError("");
@@ -2171,6 +2326,11 @@ export default function App() {
     setShowProfileMenu(false);
     setShowNotifications(false);
 
+    if (isPreviewMode) {
+      exitPreviewMode();
+      return;
+    }
+
     try {
       await signOutFirebaseUser();
     } catch (error) {
@@ -2179,6 +2339,10 @@ export default function App() {
   };
 
   const handleClearData = () => {
+    if (isPreviewMode) {
+      return;
+    }
+
     if (clearingData) {
       return;
     }
@@ -2188,6 +2352,11 @@ export default function App() {
   };
 
   const confirmClearData = async () => {
+    if (isPreviewMode) {
+      setShowClearDataPrompt(false);
+      return;
+    }
+
     try {
       setClearingData(true);
       deviceOnlineRef.current = false;
@@ -2238,12 +2407,21 @@ export default function App() {
   };
 
   const handleClearHistory = () => {
+    if (isPreviewMode) {
+      return;
+    }
+
     if (clearingHistory) return;
     setClearHistoryError("");
     setShowClearHistoryPrompt(true);
   };
 
   const confirmClearHistory = async () => {
+    if (isPreviewMode) {
+      setShowClearHistoryPrompt(false);
+      return;
+    }
+
     try {
       setClearingHistory(true);
       readingHistoryRef.current = [];
@@ -2784,6 +2962,17 @@ export default function App() {
             {authMode === "signin" && (
               <button
                 type="button"
+                onClick={enterPreviewMode}
+                disabled={authSubmitting}
+                className="mt-3 w-full rounded-xl border border-emerald-400/50 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:border-emerald-300 hover:bg-emerald-400/10 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Preview dashboard with sample data
+              </button>
+            )}
+
+            {authMode === "signin" && (
+              <button
+                type="button"
                 disabled={authSubmitting}
                 onClick={() => {
                   setAuthError("");
@@ -2825,6 +3014,32 @@ export default function App() {
       data-theme={isDark ? "dark" : "light"}
     >
       <div className="dashboard-frame flex min-h-0 w-full flex-col gap-3 px-2 py-3 sm:gap-4 sm:px-3 sm:py-4">
+        {isPreviewMode && (
+          <div
+            className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-sm ${
+              isDark
+                ? "border-amber-300/30 bg-amber-300/10 text-amber-100"
+                : "border-amber-500/30 bg-amber-50 text-amber-900"
+            }`}
+            role="status"
+          >
+            <span>
+              <strong>Preview mode:</strong> dashboard values are simulated
+              and update continuously. Nothing is saved to Firebase.
+            </span>
+            <button
+              type="button"
+              onClick={exitPreviewMode}
+              className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                isDark
+                  ? "border-amber-200/40 hover:bg-amber-200/10"
+                  : "border-amber-700/30 hover:bg-amber-100"
+              }`}
+            >
+              Back to sign in
+            </button>
+          </div>
+        )}
         <header
           className={`dashboard-header relative z-50 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${headerClass}`}
         >
@@ -3659,10 +3874,11 @@ export default function App() {
                                     : formatPower(step.previousPower)}
                                 </td>
                                 <td className="py-3">
-                                  {step.vref.toFixed(2)} V
+                                  {Number(step.vref).toFixed(2)} V
                                 </td>
                                 <td className="py-3">
-                                  {step.stepV === null
+                                  {step.stepV === null ||
+                                  step.stepV === undefined
                                     ? "Not reported"
                                     : `${step.stepV.toFixed(2)} V`}
                                 </td>
@@ -3759,7 +3975,11 @@ export default function App() {
                       </button>
                       <button
                         onClick={handleClearHistory}
-                        disabled={clearingHistory || historyLog.length === 0}
+                        disabled={
+                          isPreviewMode ||
+                          clearingHistory ||
+                          historyLog.length === 0
+                        }
                         className={`rounded-full px-4 py-2 text-xs font-semibold shadow transition disabled:cursor-not-allowed disabled:opacity-50 ${
                           isDark
                             ? "bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
@@ -4010,7 +4230,7 @@ export default function App() {
                     </div>
                     <button
                       onClick={handleClearData}
-                      disabled={clearingData}
+                      disabled={isPreviewMode || clearingData}
                       className={`flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold shadow-none transition disabled:cursor-not-allowed disabled:opacity-60 ${
                         isDark
                           ? "border-rose-400/50 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20"
